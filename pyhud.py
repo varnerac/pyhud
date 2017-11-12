@@ -54,7 +54,7 @@ class ThreadedUdpListener(threading.Thread):
                     event_state_bool = true
                 self.maybe_queue_msg(event_num, event_state_bool)                
         except (KeyboardInterrupt, SystemExit):
-            print("[+] Keyboard interrupt. Exiting.")
+            print("[+] Keyboard interrupt. Exiting UDP server.")
             raise
 
 class Gui(object):
@@ -154,8 +154,9 @@ class Gui(object):
         except Empty:
             self.label.after(1, self.event_loop)
         except (KeyboardInterrupt, SystemExit):
-            print("[+] Keyboard interrupt. Exiting.")
+            print("[+] Keyboard interrupt. Exiting HUD.")
             self.root.destroy()
+            self.root.quit()
             raise
 
 if __name__ == "__main__":
