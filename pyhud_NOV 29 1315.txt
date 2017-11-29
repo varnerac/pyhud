@@ -1,0 +1,162 @@
+#!/usr/bin/env python
+
+import threading
+import socket
+import argparse
+import struct
+from Tkinter import *
+from playsound import playsound
+from Queue import Empty, Queue
+
+EVENT_NUM_VALUES = {0,1,2,3,4,5,6,7,8,9}
+
+EVENT_DICT = {
+	0: [0, 0, 0, 0],
+	1: [0, 1, 0, 0],
+	2: [1, 0, 0, 0],
+	3: [0, 1, 1, 1],
+	4: [1, 0, 1, 1],
+	5: [0, 1, 0, 1],
+	6: [1, 0, 1, 0],
+	7: [0, 0, 1, 1],
+	8: [0, 0, 0, 1],
+	9: [0, 0, 1, 0]
+}
+
+class ThreadedUdpListener(threading.Thread):
+	def __init__(self, queue):
+		super(ThreadedUdpListener, self).__init__()
+		self.queue = queue
+		self.left_visual = False
+		self.right_visual = False
+		self.left_audio = False
+		self.right_audio = False
+		self.put_indicator = 10
+
+	def push(self):
+		queue.put( (self.left_visual, self.right_visual, self.left_audio, self.right_audio) )
+	
+	@staticmethod
+	def crash_on_bad_response(event_num, event_status):
+		if (event_num  not in EVENT_NUM_VALUES):
+			print("[+] ERROR: Event number not valid. It was " + str(event_num))
+			exit()
+		if (event_status > 1):
+			print("[+] ERROR: Event status not 1 or 0. It was " + str(event_status))
+			exit()
+
+	def run(self):
+		dyn_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		dyn_sock.bind( ('192.168.1.106', 5007) )
+		try:
+			event_num = 0
+			while True:
+				dyn_data = dyn_sock.recvfrom(4)[0] # 142 values, each 4 bytes, + 640 values each 1 byte
+				event_num = struct.unpack('h', dyn_data[0:2])[0] # little endian 0-4
+				event_status = struct.unpack('h', dyn_data[2:4])[0]
+				self.crash_on_bad_response(event_num, event_status)
+				if (event_status):
+					print(event_num)
+					self.left_visual, self.right_visual, self.left_audio, self.right_audio = EVENT_DICT[event_num]		 
+					self.push()
+					self.left_visual, self.right_visual, self.left_audio, self.right_audio = EVENT_DICT[0]		 
+
+		except (KeyboardInterrupt, SystemExit):
+			print("[+] Keyboard interrupt. Exiting UDP server.")
+			raise
+
+class Gui(object):
+	'''
+	Takes a Queue that holds tuples from the UDP listener:
+	(side, boolean) where the first value is an integer and the second is a boolean
+	'''
+	def __init__(self, queue):
+		# Queue to communicate between UDP listener and the GUI
+		self.queue = queue
+		self.root = Tk()
+		# HUD dimensions
+		self.root.geometry("848x480")
+		# make window transparent
+		self.root.attributes('-alpha', 0.3)
+		
+		
+		self.none_image = PhotoImage(file = "images/none.gif")
+		self.left_image = PhotoImage(file = "images/left.gif")
+		self.right_image = PhotoImage(file = "images/right.gif")
+		self.both_image = PhotoImage(file = "images/both.gif")
+		
+		self.label = Label(self.root, image = self.none_image)
+		self.label.pack()
+		self.label.after(0, self.self_test)
+		self.root.mainloop()
+
+	def maybe_draw(self, left_visual, right_visual):
+		if (left_visual and right_visual):
+			self.label.config(image = self.both_image)
+		elif (left_visual and not right_visual):
+			self.label.config(image = self.left_image)
+		elif (not left_visual and right_visual):
+			self.label.config(image = self.right_image)
+		elif (not left_visual and not right_visual):
+			self.label.config(image = self.none_image)
+		self.label.after(1000)
+		self.root.update()
+
+	def self_test(self):
+		self.maybe_draw(True, False)
+		self.label.after(500)
+		self.maybe_draw(False, True)
+		self.label.after(500)
+		self.maybe_draw(True, True)
+		self.label.after(500)
+		self.maybe_draw(False, False)
+		self.label.after(500)
+
+		#self.maybe_play_sound(True, False)
+		#self.label.after(1000)
+		#self.maybe_play_sound(False, True)
+		#self.label.after(1000)
+		#self.maybe_play_sound(True, True)
+		
+		self.label.after(3000, self.event_loop)
+
+	def maybe_play_sound(self, left_audio, right_audio):
+		if (left_audio and right_audio):
+					self.play_both()
+		elif (left_audio and not right_audio):
+					self.play_left()
+		elif (not left_audio and right_audio):
+					self.play_right()
+					
+	@staticmethod
+	def play_right():
+		playsound('sounds/right.wav')
+
+	@staticmethod
+	def play_left():
+		playsound('sounds/left.wav')
+
+	@staticmethod
+	def play_both():
+		playsound('sounds/stereo.wav')
+
+	def event_loop(self):
+		#print('[+] in event loop')
+		try:
+			(left_visual, right_visual, left_audio, right_audio) = queue.get(True, None)
+			print("[+] Received notification left_visual: {0!s}, right_visual: {1!s}, left_audio: {2!s}, right_audio: {3!s}".format(left_visual, right_visual, left_audio, right_audio))
+			self.maybe_draw(left_visual, right_visual)
+			self.maybe_play_sound(left_audio, right_audio)
+			self.label.after(1, self.event_loop)
+		except Empty:
+			self.label.after(1, self.event_loop)
+		except (KeyboardInterrupt, SystemExit):
+			print("[+] Keyboard interrupt. Exiting HUD.")
+			self.root.destroy()
+			self.root.quit()
+			raise
+
+if __name__ == "__main__":
+	queue = Queue()
+	ThreadedUdpListener(queue).start()
+	Gui(queue)
